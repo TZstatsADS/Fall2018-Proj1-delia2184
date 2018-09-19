@@ -1,55 +1,63 @@
 ---
 title: "Happy Moments"
 author: "Arpita Shah and Tian Zheng"
-output: html_notebook
 runtime: shiny
 ---
 
-HappyDB is a corpus of 100,000 crowd-sourced happy moments via Amazon's Mechanical Turk. You can read more about it on https://arxiv.org/abs/1801.07746.
+#A R Notebook Data Story on Happy Moments
 
-Here, we explore this data set and try to answer the question, "What makes people happy?"
+## What kind of moments and which ground truth category can influence your happiness
 
-### Step 0 - Load all the required libraries
+Many things can make one's heart smile with joy. HappyDB is "a corpus of 100,000 crowd-sourced happy moments". 
+Participants were given a simple task:
 
-From the packages' descriptions:
+What made you happy today? 
 
-+ `tidyverse` is an opinionated collection of R packages designed for data science. All packages share an underlying design philosophy, grammar, and data structures;
-+ `tidytext` allows text mining using 'dplyr', 'ggplot2', and other tidy tools;
-+ `DT` provides an R interface to the JavaScript library DataTables;
-+ `scales` map data to aesthetics, and provide methods for automatically determining breaks and labels for axes and legends;
-+ `wordcloud2` provides an HTML5 interface to wordcloud for data visualization;
-+ `gridExtra` contains miscellaneous functions for "grid" graphics;
-+ `ngram` is for constructing n-grams (“tokenizing”), as well as generating new text based on the n-gram structure of a given text input (“babbling”);
-+ `Shiny` is an R package that makes it easy to build interactive web apps straight from R;
+Reflect on the past 24 hours, 
+and recall three actual events 
+that happened to you that made you happy. 
+Write down your happy moment 
+in a complete sentence.
+(Write three such moments.)
 
-```{r load libraries, warning=FALSE, message=FALSE}
+The goal of this project is to look deeper into the causes that make us happy. Natural language processing and text mining are natural tools to derive interesting findings in this collection of happy moments.
 
+In this project we will carry out an exploratory data analysis of the corpus of HappyDB.
+
+
+```{r load libraries, warning=FALSE, message=FALSE,echo=FALSE}
 library(tidyverse)
+library(tm)
 library(tidytext)
 library(DT)
 library(scales)
 library(wordcloud2)
 library(gridExtra)
 library(ngram)
-library(shiny) 
+library(shiny)
+library(igraph)
+library(ggraph)
+library(tmap)
+library(topicmodels)
+library(gdalUtils)
+
 ```
 
-### Step 1 - Load the processed text data along with demographic information on contributors
+### Data Structure
 
-We use the processed data for our analysis and combine it with the demographic information available.
+We use the processed data (without stopwords) for our analysis and combine it with the demographic information available.
 
-```{r load data, warning=FALSE, message=FALSE}
+Let's first look at the data structure
+
+```{r load data, warning=FALSE, message=FALSE,echo=FALSE}
 hm_data <- read_csv("../output/processed_moments.csv")
 
 urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv'
 demo_data <- read_csv(urlfile)
 ```
 
-### Combine both the data sets and keep the required columns for analysis
 
-We select a subset of the data that satisfies specific row conditions.
-
-```{r combining data, warning=FALSE, message=FALSE}
+```{r combining data, warning=FALSE, message=FALSE,echo=FALSE}
 hm_data <- hm_data %>%
   inner_join(demo_data, by = "wid") %>%
   select(wid,
@@ -69,14 +77,67 @@ hm_data <- hm_data %>%
   filter(reflection_period %in% c("24h", "3m")) %>%
   mutate(reflection_period = fct_recode(reflection_period, 
                                         months_3 = "3m", hours_24 = "24h"))
+summary(hm_data)
 ```
 
-```{r}
-datatable(hm_data)
-```
-### Create a bag of words using the text data
+### EDA (Exploratory Data Analysis)
 
-```{r bag of words, warning=FALSE, message=FALSE}
+EDA is for seeing what the data can tell us and the information beyond data. Here, we analyze the dataset to summarize their main characteristics with visual methods.
+
+####The most important part in EDA is the distribution and correlation between each variables and the outliers.
+
+```{r fig.width=8, fig.height=4, warning=FALSE,echo=FALSE}
+
+categoricaldata <- hm_data[which(hm_data$ground_truth_category != "NA"),]
+
+ggplot(hm_data,aes(x = count)) + geom_density()
+```
+
+We can see that most of the happy moments are only in a few words.
+
+```{r fig.width=10, fig.height=4, warning=FALSE,echo=FALSE}
+ggplot(hm_data,aes(x= gender, y = count)) +  geom_jitter(alpha = 0.1)
+```
+
+```{r fig.width=12, fig.height=5, warning=FALSE,echo=FALSE}
+ggplot(hm_data,aes(x= country, y = count)) +  geom_jitter(alpha = 0.1) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+From the plots above, we can conclude that there are many outliers and they are highly influenced by different factors.
+
+
+```{r fig.width=8, fig.height=4, warning=FALSE,echo=FALSE}
+ggplot(categoricaldata,aes(x= gender, y = ground_truth_category, color = marital))+ geom_jitter(alpha = 0.4)
+
+ggplot(categoricaldata,aes(x= parenthood, y = ground_truth_category, color = marital))+ geom_jitter(alpha = 0.4)
+
+ggplot(categoricaldata,aes(x= reflection_period, y = ground_truth_category, color = marital))+ geom_jitter(alpha = 0.4)
+```
+
+From the above pictures, it is obvious that most the participants can get happy moments from affection and achievement. 
+For those married women, they are likely to get happiness from affection than man whose might be more into the exercise and bonding if they are single.
+It is interesting that for those single participants with no child, they tend to be happy in their leisure time.
+We can also know that participants tends to recalled the same things about their happy moments both in 24 hours and 3 months.
+
+
+```{r fig.width=12, fig.height=5, warning=FALSE,echo=FALSE}
+ggplot(categoricaldata,aes(x= country, y = ground_truth_category, color = parenthood))+ geom_jitter(alpha = 0.4) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(categoricaldata,aes(x= country, y = ground_truth_category, color = gender))+ geom_jitter(alpha = 0.4) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(categoricaldata,aes(x= country, y = ground_truth_category, color = reflection_period))+ geom_jitter(alpha = 0.4) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(categoricaldata,aes(x= country, y = ground_truth_category, color = marital))+ geom_jitter(alpha = 0.4) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Our participants are mainly come from two countries and it is obvious that people from the USA can get happiness in the same level from each ground truth category.
+
+
+### Create bag of words and bigrams using the text data
+
+Then we start to look at the top words and the top bigrams
+
+```{r bag of words, warning=FALSE, message=FALSE,echo=FALSE}
 bag_of_words <-  hm_data %>%
   unnest_tokens(word, text)
 
@@ -84,9 +145,7 @@ word_count <- bag_of_words %>%
   count(word, sort = TRUE)
 ```
 
-### Create bigrams using the text data
-
-```{r bigram, warning=FALSE, message=FALSE}
+```{r bigram, warning=FALSE, message=FALSE,echo=FALSE}
 hm_bigrams <- hm_data %>%
   filter(count != 1) %>%
   unnest_tokens(bigram, text, token = "ngrams", n = 2)
@@ -94,13 +153,17 @@ hm_bigrams <- hm_data %>%
 bigram_counts <- hm_bigrams %>%
   separate(bigram, c("word1", "word2"), sep = " ") %>%
   count(word1, word2, sort = TRUE)
+
+word_count
+bigram_counts
 ```
 
-### Specify the user interface for the R Shiny app
+
+### R Shiny app
 
 We want each tab to have its own controls for input and so Shiny's "navbarPage()" layout works the best. We have the first tab visualizing the overall data, second one for scatterplots comparing the proportion of words within categories, third one highlighting the most frequently appearing bigrams based on categories and the last tab to explore the actual happy moments.
 
-```{r shiny UI, warning=FALSE, message=FALSE}
+```{r shiny UI, warning=FALSE, message=FALSE,echo=FALSE}
 ui <- navbarPage("What makes people happy?",
                  tabPanel("Overview",
                           
@@ -200,11 +263,9 @@ ui <- navbarPage("What makes people happy?",
 )
 ```
 
-### Develop the server for the R Shiny app
-
 This shiny app visualizes summary of data and displays the data table itself.
 
-```{r shiny server, warning=FALSE, message=FALSE}
+```{r shiny server, warning=FALSE, message=FALSE,echo=FALSE}
 server <- function(input, output, session) {
   
   pt1 <- reactive({
@@ -310,8 +371,7 @@ server <- function(input, output, session) {
 }
 ```
 
-### Run the R Shiny app
 
-```{r shiny app, warning=FALSE, message=FALSE}
+```{r shiny app, warning=FALSE, message=FALSE,echo=FALSE}
 shinyApp(ui, server)
 ```
